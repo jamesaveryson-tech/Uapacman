@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>UAPac - UFO Pac-Man</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+  body { margin:0; background:#000; overflow:hidden; touch-action:manipulation; }
+  canvas { display:block; image-rendering:pixelated; }
+  #score { position:absolute; top:10px; left:10px; color:#0ff; font:20px monospace; z-index:10; }
+  #startScreen, #gameOverScreen {
+    position:absolute; inset:0; background:rgba(0,0,20,0.95);
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    color:#0ff; font-family:monospace; text-align:center;
+  }
+  button { margin-top:20px; padding:15px 30px; font-size:24px; background:#000; color:#0ff; border:2px solid #0ff; }
+</style>
+</head>
+<body>
+
+<div id="score">SCORE: 0</div>
+
+<div id="startScreen">
+  <h1>UAPac</h1>
+  <p>Eat all orbs before the military craft catch you</p>
+  <button onclick="startGame()">START DISCLOSURE</button>
+</div>
+
+<div id="gameOverScreen" style="display:none">
+  <h1>GAME OVER</h1>
+  <p id="finalScore"></p>
+  <button onclick="location.reload()">TRY AGAIN</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<!-- jsfxr for retro chiptune sounds -->
+<script src="https://cdn.jsdelivr.net/gh/egonelbre/jsfxr@master/jsfxr.min.js"></script>
+
+<script>
+// ================== CHIPTUNE SOUNDS ==================
+const sfx = {
+  eat:      "JyM2YgNg5ADv///+//////8AAA==",
+  death:    "JyQxYgNg9AD///////8AAAAA==",
+  intro:    "JyQxYgNg5AD///////8AAAAA==",
+  powerup:  "JyM2YgNg5AD///////8AAAAA==",
+  ghost:    "JyM2YgNg5AD///////8AAAAA=="
+};
+
+function play(sound) {
+  jsfxr(sound).play();
+}
+
+// ================== GAME CODE ==================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let w, h, scale;
+
+function resize() {
+  w = canvas.width = window.innerWidth;
+  h = canvas.height = window.innerHeight;
+  scale = Math.min(w,h) / 400;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const TILE = 20 * scale;
+const ROWS = 23;
+const COLS = 19;
+
+const maze = [
+  "1111111111111111111",
+  "1222222221222222221",
+  "1211111121211111121",
+  "1200000121000012121",
+  "1211122222222112121",
+  "1211121111112112121",
+  "1200021000012000021",
+  "1111121221222111111",
+  "     21222212      ",
+  "1111121111112111111",
+  "1222222222222222221",
+  "1211112112121111121",
+  "1200012112121000121",
+  "1222212112121222121",
+  "1000012000021000011",
+  "1222212112121222121",
+  "1200012112121000121",
+  "1211112112121111121",
+  "1222222222222222221",
+  "1111121111112111111",
+  "1200021000012000021",
+  "1211122222222112121",
+  "1222222221222222221",
+  "1111111111111111111"
+];
+
+let player = { x:9, y:17, dir:0, nextDir:0, speed:2.5*scale };
+let ghosts = [
+  {x:9,y:9, color:"#f00", type:0}, // F-22 (red)
+  {x:8,y:9, color:"#0f0", type:1}, // TR-3B (green)
+  {x:10,y:9,color:"#ff0", type:2}, // Black Helicopter (yellow)
+  {x:9,y:10,color:"#f80", type:3}  // Drone (orange)
+];
+let dots = [], powerDots = [], score = 0, lives = 3, gameRunning = false;
+
+function initLevel() {
+  dots = []; powerDots = [];
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(maze[y][x]==='0') dots.push({x,y});
+      if(maze[y][x]==='2') powerDots.push({x,y});
+    }
+  }
+  player.x = 9; player.y = 17;
+  ghosts.forEach(g=>{ g.x=9; g.y=9; });
+}
+
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  score = 0; lives = 3;
+  initLevel();
+  play(sfx.intro);
+  gameRunning = true;
+  requestAnimationFrame(loop);
+}
+
+function gameOver() {
+  gameRunning = false;
+  document.getElementById('finalScore').textContent = `FINAL SCORE: ${score}`;
+  document.getElementById('gameOverScreen').style.display = 'flex';
+}
+
+// Input - swipe or arrow keys
+let touchStart = null;
+window.addEventListener('keydown', e=>{
+  if(!gameRunning) return;
+  switch(e.key){
+    case 'ArrowUp':    player.nextDir = 0; break;
+    case 'ArrowRight': player.nextDir = 1; break;
+    case 'ArrowDown':  player.nextDir = 2; break;
+    case 'ArrowLeft':  player.nextDir = 3; break;
+  }
+});
+canvas.addEventListener('touchstart', e=>{ touchStart = e.touches[0]; e.preventDefault(); }, {passive:false});
+canvas.addEventListener('touchmove', e=>{
+  if(!touchStart || !gameRunning) return;
+  const t = e.touches[0];
+  const dx = t.clientX - touchStart.clientX;
+  const dy = t.clientY - touchStart.clientY;
+  if(Math.abs(dx)>50 || Math.abs(dy)>50){
+    if(Math.abs(dx)>Math.abs(dy)){
+      player.nextDir = dx>0 ? 1 : 3;
+    } else {
+      player.nextDir = dy>0 ? 2 : 0;
+    }
+    touchStart = null;
+  }
+  e.preventDefault();
+}, {passive:false});
+
+// Main loop
+function loop() {
+  ctx.fillStyle = '#000022';
+  ctx.fillRect(0,0,w,h);
+
+  // Draw maze
+  ctx.strokeStyle = '#00ffff';
+  ctx.lineWidth = 4*scale;
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(maze[y][x]==='1'){
+        ctx.strokeRect(x*TILE, y*TILE, TILE, TILE);
+      }
+    }
+  }
+
+  // Draw dots
+  ctx.fillStyle = '#0ff';
+  dots.forEach(d=> { ctx.beginPath(); ctx.arc((d.x+0.5)*TILE, (d.y+0.5)*TILE, 3*scale,0,Math.PI*2); ctx.fill(); });
+  powerDots.forEach(d=> { ctx.beginPath(); ctx.arc((d.x+0.5)*TILE, (d.y+0.5)*TILE, 8*scale,0,Math.PI*2); ctx.fill(); });
+
+  // Player - glowing Tic-Tac UFO
+  ctx.fillStyle = '#00ffff';
+  ctx.save();
+  ctx.translate((player.x+0.5)*TILE, (player.y+0.5)*TILE);
+  ctx.rotate(player.dir*Math.PI/2);
+  ctx.beginPath();
+  ctx.moveTo(12*scale,0);
+  ctx.lineTo(-10*scale,-10*scale);
+  ctx.lineTo(-5*scale,0);
+  ctx.lineTo(-10*scale,10*scale);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Ghosts - military craft
+  ghosts.forEach(g=>{
+    ctx.fillStyle = g.color;
+    ctx.fillRect(g.x*TILE+2*scale, g.y*TILE+2*scale, TILE-4*scale, TILE-4*scale);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('✈', (g.x+0.3)*TILE, (g.y+0.8)*TILE);
+  });
+
+  // Update logic
+  if(gameRunning) update();
+
+  document.getElementById('score').textContent = `SCORE: ${score}   LIVES: ${lives}`;
+  requestAnimationFrame(loop);
+}
+
+function update() {
+  // Player movement
+  const dirs = [[0,-1],[1,0],[0,1],[-1,0]];
+  const [dx,dy] = dirs[player.nextDir];
+  const nx = player.x + dx;
+  const ny = player.y + dy;
+  if(maze[ny][nx] !== '1'){
+    player.dir = player.nextDir;
+  }
+  const [dx2,dy2] = dirs[player.dir];
+  const px = player.x + dx2 * player.speed/10;
+  const py = player.y + dy2 * player.speed/10;
+  if(maze[Math.floor(py+dy2*0.5)][Math.floor(px+dx2*0.5)] !== '1'){
+    player.x = px; player.y = py;
+  }
+
+  // Wrap tunnels
+  if(player.x < 0) player.x = COLS-1;
+  if(player.x >= COLS) player.x = 0;
+
+  // Eat dots
+  const pxTile = Math.round(player.x);
+  const pyTile = Math.round(player.y);
+  dots = dots.filter(d=>{
+    if(d.x===pxTile && d.y===pyTile){
+      score += 10; play(sfx.eat); return false;
+    }
+    return true;
+  });
+  powerDots = powerDots.filter(d=>{
+    if(d.x===pxTile && d.y===pyTile){
+      score += 50; play(sfx.powerup);
+      ghosts.forEach(g=>g.scared=true);
+      setTimeout(()=>ghosts.forEach(g=>g.scared=false), 8000);
+      return false;
+    }
+    return true;
+  });
+
+  // Win
+  if(dots.length + powerDots.length === 0){
+    play(sfx.intro);
+    initLevel();
+  }
+
+  // Simple ghost AI
+  ghosts.forEach(g=>{
+    if(Math.random()<0.02){
+      g.dir = Math.floor(Math.random()*4);
+    }
+    const [gx,gy] = dirs[g.dir||0];
+    if(maze[Math.floor(g.y+gy)][Math.floor(g.x+gx)] !== '1'){
+      g.x += gx*0.02;
+      g.y += gy*0.02;
+    } else {
+      g.dir = Math.floor(Math.random()*4);
+    }
+  });
+
+  // Collision
+  ghosts.forEach(g=>{
+    if(Math.hypot(g.x-player.x, g.y-player.y)<0.7){
+      play(sfx.death);
+      lives--;
+      if(lives<=0) gameOver();
+      else {
+        player.x=9; player.y=17;
+        ghosts.forEach(gg=>{gg.x=9;gg.y=9;});
+      }
+    }
+  });
+}
+
+loop(); // start rendering
+</script>
+</body>
+</html>
